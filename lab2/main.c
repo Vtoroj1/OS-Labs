@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
+#define CACHE_LINE_SIZE 64
 
 typedef struct {
     int id;
