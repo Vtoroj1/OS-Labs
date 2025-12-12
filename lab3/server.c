@@ -1,13 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <semaphore.h>
-#include <errno.h>
-
 #include "common.h"
 
 int is_composite(int n) {
@@ -131,7 +121,7 @@ int main(int argc, char** argv) {
     
     while (!shared_data->terminate) {
         if (sem_wait(sem_client) == -1) {
-            if (errno == EINTR) continue; // Прервано сигналом
+            if (errno == EINTR) continue;
             perror("sem_wait failed");
             break;
         }

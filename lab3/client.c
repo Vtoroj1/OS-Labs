@@ -1,13 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <semaphore.h>
-#include <errno.h>
-
 #include "common.h"
 
 int main(int argc, char** argv) {
@@ -36,8 +26,7 @@ int main(int argc, char** argv) {
     
     int shm_fd = shm_open(shm_name, O_RDWR, 0666);
     if (shm_fd == -1) {
-        const char msg[] = "Error: Shared memory not found. Сначала запустите сервер.\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        perror("shm_open failed");
         exit(EXIT_FAILURE);
     }
     
@@ -52,9 +41,8 @@ int main(int argc, char** argv) {
     sem_t* sem_server = sem_open(sem_server_name, 0);
     
     if (sem_client == SEM_FAILED || sem_server == SEM_FAILED) {
-        const char msg[] = "Error: Semaphores not found. Сначала запустите сервер.\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, NULL, NULL);
+        perror("sem_open failed");
+        cleanup_resources(shm_name, sem_client_name, sem_server_name, shared_data, shm_fd, sem_client, sem_server);
         exit(EXIT_FAILURE);
     }
     
@@ -64,7 +52,7 @@ int main(int argc, char** argv) {
     }
     
     if (!shared_data->server_ready) {
-        const char msg[] = "Error: Server not ready after 10 seconds\n";
+        const char msg[] = "Ошибка. Сервер не готов спустя 10 секунд\n";
         write(STDERR_FILENO, msg, sizeof(msg) - 1);
         cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
         exit(EXIT_FAILURE);

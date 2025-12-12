@@ -1,14 +1,16 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <stdint.h>
-#include <stdbool.h>
 #include <stdio.h>
-#include <time.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <semaphore.h>
+#include <errno.h>
 
 #define BUFFER_SIZE 4096
 #define SHM_NAME_PREFIX "/shm_ipc_"

@@ -26,8 +26,8 @@ int main() {
         return 1;
     }
     
-    e = dlsym(lib, "e");
-    area = dlsym(lib, "area");
+    e = (e_func *)dlsym(lib, "e");
+    area = (area_func *)dlsym(lib, "area");
     
     if (!e || !area) {
         const char msg[] = "Ошибка загрузки функций\n";
@@ -39,7 +39,6 @@ int main() {
     char buffer[256];
     int n;
     
-
     const char msg[] = "Текущая библиотека - 1\n";
     write(STDOUT_FILENO, msg, sizeof(msg));
 
@@ -73,8 +72,8 @@ int main() {
                 return 1;
             }
             
-            e = dlsym(lib, "e");
-            area = dlsym(lib, "area");
+            e = (e_func *)dlsym(lib, "e");
+            area = (area_func *)dlsym(lib, "area");
             
             if (!e || !area) {
                 const char msg[] = "Ошибка загрузки функций\n";
