@@ -70,33 +70,6 @@ void process_data(const char* input, size_t input_size, char* output, size_t* ou
             has_digits = 0;
         }
     }
-
-    if (has_digits) {
-        if (is_negative) {
-            number = -number;
-        }
-    
-        if (is_composite(number)) {
-            char num_str[32];
-            int len = 0;
-            int n = number;
-            char temp[32];
-            int temp_len = 0;
-            while (n > 0) {
-                temp[temp_len++] = '0' + (n % 10);
-                n /= 10;
-            }
-            for (int j = temp_len - 1; j >= 0; j--) {
-                num_str[len++] = temp[j];
-            }
-            num_str[len++] = '\n';
-                
-            if (*output_size + len <= BUFFER_SIZE) {
-                memcpy(output + *output_size, num_str, len);
-                *output_size += len;
-            } 
-        }
-    }
 }
 
 int main(int argc, char** argv) {
