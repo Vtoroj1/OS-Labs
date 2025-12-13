@@ -61,9 +61,9 @@ int main() {
             current_lib = (current_lib == 1) ? 2 : 1;
             
             if (current_lib == 1) {
-                lib = dlopen("./libvar1.so", RTLD_LAZY);
+                lib = dlopen("./libvar1.so", RTLD_NOW);
             } else {
-                lib = dlopen("./libvar2.so", RTLD_LAZY);
+                lib = dlopen("./libvar2.so", RTLD_NOW);
             }
             
             if (!lib) {
