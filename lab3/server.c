@@ -1,67 +1,5 @@
 #include "common.h"
 
-int is_composite(int n) {
-    if (n <= 3) return 0;
-    if (n % 2 == 0 || n % 3 == 0) return 1;
-    
-    for (int i = 5; i * i <= n; i += 6) {
-        if (n % i == 0 || n % (i + 2) == 0)
-            return 1;
-    }
-    return 0;
-}
-
-void process_data(const char* input, size_t input_size, char* output, size_t* output_size) {
-    int number = 0;
-    int is_negative = 0;
-    int has_digits = 0;
-    *output_size = 0;
-    
-    for (size_t i = 0; i < input_size; i++) {
-        char c = input[i];
-        if (c >= '0' && c <= '9') {
-            number = number * 10 + (c - '0');
-            has_digits = 1;
-        } else if (c == '-' && !has_digits) {
-            is_negative = 1;
-        } else if ((c == '\n' || i == input_size - 1) && has_digits) {
-
-            if (is_negative) {
-                number = -number;
-            }
-            
-            if (!is_composite(number)) {
-                break;
-            } else {
-                char num_str[32];
-                int len = 0;
-                int n = number;
-                char temp[32];
-                int temp_len = 0;
-                while (n > 0) {
-                    temp[temp_len++] = '0' + (n % 10);
-                    n /= 10;
-                }
-                for (int j = temp_len - 1; j >= 0; j--) {
-                    num_str[len++] = temp[j];
-                }
-                num_str[len++] = '\n';
-                
-                if (*output_size + len <= BUFFER_SIZE) {
-                    memcpy(output + *output_size, num_str, len);
-                    *output_size += len;
-                } else {
-                    break;
-                }
-            }
-            
-            number = 0;
-            is_negative = 0;
-            has_digits = 0;
-        }
-    }
-}
-
 int main(int argc, char** argv) {
     if (argc != 2) {
         const char msg[] = "Ввод должен быть вида: server <session_id>\n";
@@ -115,53 +53,95 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
     
-    char info_msg[256];
-    int info_len = snprintf(info_msg, sizeof(info_msg), "Session_id: %s\n" "Shared memory: %s\n" "Ожидание клиента...\n", session_id, shm_name);
-    write(STDOUT_FILENO, info_msg, info_len);
+    char info_msg[512];
+    int msg_len = snprintf(info_msg, sizeof(info_msg), "Session_id: %s\n" "Shared memory: %s\n" "Ожидание клиента...\n", session_id, shm_name);
+    if (msg_len > 0) {
+        write(STDOUT_FILENO, info_msg, msg_len);
+    }
     
-    while (!shared_data->terminate) {
-        if (sem_wait(sem_client) == -1) {
-            if (errno == EINTR) continue;
-            perror("sem_wait failed");
-            break;
+    pid_t pid = fork();
+    
+    if (pid == -1) {
+        perror("fork failed");
+        cleanup_resources(shm_name, sem_client_name, sem_server_name, shared_data, shm_fd, sem_client, sem_server);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (pid == 0) {
+        close(shm_fd);
+        
+        const char client_header[] = "\nКлиент (дочерний процесс)\n";
+        const char prompt[] = "Введите имя файла с числами: ";
+        
+        write(STDOUT_FILENO, client_header, sizeof(client_header) - 1);
+        write(STDOUT_FILENO, prompt, sizeof(prompt) - 1);
+        
+        char filename[256];
+        ssize_t bytes_read = read(STDIN_FILENO, filename, sizeof(filename) - 1);
+        
+        if (bytes_read <= 0) {
+            const char err_msg[] = "Ошибка чтения имени файла\n";
+            write(STDERR_FILENO, err_msg, sizeof(err_msg) - 1);
+            exit(EXIT_FAILURE);
         }
         
-        if (shared_data->terminate) {
-            break;
-        }
+        filename[bytes_read - 1] = '\0';
+        
+        execl("./client", "client", session_id, filename, NULL);
+        
+        const char execl_err[] = "execl failed\n";
+        write(STDERR_FILENO, execl_err, sizeof(execl_err) - 1);
+        exit(EXIT_FAILURE);
+    } else {                
+        int has_output = 0;
+        int early_termination = 0;
+        
+        while (!shared_data->terminate && !early_termination) {
+            if (sem_wait(sem_client) == -1) {
+                if (errno == EINTR) continue;
+                perror("sem_wait failed");
+                break;
+            }
+            
+            if (shared_data->terminate) {
+                break;
+            }
 
-        if (!shared_data->client_ready) {
+            if (!shared_data->client_ready) {
+                if (sem_post(sem_server) == -1) {
+                    perror("sem_post failed");
+                    break;
+                }
+                continue;
+            }
+            
+            if (shared_data->should_terminate_early) {
+                early_termination = 1;
+            }
+            
+            if (shared_data->data_size > 0) {
+                if (!has_output) {
+                    const char received_msg[] = "Найдены составные числа:\n";
+                    write(STDOUT_FILENO, received_msg, sizeof(received_msg) - 1);
+                    has_output = 1;
+                }
+                write(STDOUT_FILENO, shared_data->data, shared_data->data_size);
+            }
+            
+            shared_data->client_ready = false;
+
             if (sem_post(sem_server) == -1) {
                 perror("sem_post failed");
                 break;
             }
-            continue;
         }
         
-        if (shared_data->data_size > 0) {
-            char output[BUFFER_SIZE];
-            size_t output_size;
-            
-            process_data(shared_data->data, shared_data->data_size, output, &output_size);
-            
-            if (output_size > 0) {
-                memcpy(shared_data->data, output, output_size);
-                shared_data->data_size = output_size;
-            } else {
-                shared_data->data_size = 0;
-            }
-        }
-        
-        shared_data->client_ready = false;
-
-        if (sem_post(sem_server) == -1) {
-            perror("sem_post failed");
-            break;
-        }
+        wait(NULL);
+        const char server_done[] = "Сервер завершил работу.\n";
+        write(STDOUT_FILENO, server_done, sizeof(server_done) - 1);
     }
     
     cleanup_resources(shm_name, sem_client_name, sem_server_name, shared_data, shm_fd, sem_client, sem_server);
     
-    write(STDOUT_FILENO, "Server terminated\n", 19);
     return EXIT_SUCCESS;
 }

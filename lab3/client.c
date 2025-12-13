@@ -1,5 +1,59 @@
 #include "common.h"
 
+int is_composite(int n) {
+    if (n <= 3) return 0;
+    if (n % 2 == 0 || n % 3 == 0) return 1;
+    
+    for (int i = 5; i * i <= n; i += 6) {
+        if (n % i == 0 || n % (i + 2) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+int process_data(const char* input, size_t input_size, char* output, size_t* output_size, int* found_invalid) {
+    int number = 0;
+    int is_negative = 0;
+    int has_digits = 0;
+    *output_size = 0;
+    *found_invalid = 0;
+    
+    for (size_t i = 0; i < input_size; i++) {
+        char c = input[i];
+        if (c >= '0' && c <= '9') {
+            number = number * 10 + (c - '0');
+            has_digits = 1;
+        } else if (c == '-' && !has_digits) {
+            is_negative = 1;
+        } else if ((c == '\n' || i == input_size - 1) && has_digits) {
+            if (is_negative) {
+                number = -number;
+            }
+            
+            if (is_composite(number)) {
+                char num_str[32];
+                int len = snprintf(num_str, sizeof(num_str), "%d\n", number);
+                
+                if (len > 0 && *output_size + len <= BUFFER_SIZE) {
+                    memcpy(output + *output_size, num_str, len);
+                    *output_size += len;
+                } else {
+                    break;
+                }
+            } else {
+                *found_invalid = 1;
+                return 0; 
+            }
+            
+            number = 0;
+            is_negative = 0;
+            has_digits = 0;
+        }
+    }
+    
+    return 1;
+}
+
 int main(int argc, char** argv) {
     if (argc != 3) {
         const char msg[] = "Ввод должен быть вида: client <session_id> <filename>\n";
@@ -26,14 +80,16 @@ int main(int argc, char** argv) {
     
     int shm_fd = shm_open(shm_name, O_RDWR, 0666);
     if (shm_fd == -1) {
-        perror("shm_open failed");
+        char err_msg[256];
+        int len = snprintf(err_msg, sizeof(err_msg), "Ошибка: Shared memory не найдена. Сначала запустите сервер.\n");
+        write(STDERR_FILENO, err_msg, len);
         exit(EXIT_FAILURE);
     }
     
     shared_data_t* shared_data = mmap(NULL, sizeof(shared_data_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (shared_data == MAP_FAILED) {
         perror("mmap failed");
-        cleanup_resources(NULL, NULL, NULL, NULL, shm_fd, NULL, NULL);
+        close(shm_fd);
         exit(EXIT_FAILURE);
     }
     
@@ -42,7 +98,8 @@ int main(int argc, char** argv) {
     
     if (sem_client == SEM_FAILED || sem_server == SEM_FAILED) {
         perror("sem_open failed");
-        cleanup_resources(shm_name, sem_client_name, sem_server_name, shared_data, shm_fd, sem_client, sem_server);
+        munmap(shared_data, sizeof(shared_data_t));
+        close(shm_fd);
         exit(EXIT_FAILURE);
     }
     
@@ -52,80 +109,84 @@ int main(int argc, char** argv) {
     }
     
     if (!shared_data->server_ready) {
-        const char msg[] = "Ошибка. Сервер не готов спустя 10 секунд\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
+        const char timeout_msg[] = "Ошибка: Сервер не готов спустя 10 секунд\n";
+        write(STDERR_FILENO, timeout_msg, sizeof(timeout_msg) - 1);
+        munmap(shared_data, sizeof(shared_data_t));
+        close(shm_fd);
+        sem_close(sem_client);
+        sem_close(sem_server);
         exit(EXIT_FAILURE);
     }
     
-    shared_data->client_ready = false;
-    if (sem_post(sem_client) == -1) {
-        perror("sem_post failed");
-        cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
-        exit(EXIT_FAILURE);
-    }
     
-    if (sem_wait(sem_server) == -1) {
-        perror("sem_wait failed");
-        cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
-        exit(EXIT_FAILURE);
-    }
-
     int file_fd = open(filename, O_RDONLY);
     if (file_fd == -1) {
-        char error_msg[256];
-        int len = snprintf(error_msg, sizeof(error_msg), "Error: Failed to open file '%s'\n", filename);
-        write(STDERR_FILENO, error_msg, len);
+        char err_msg[256];
+        int len = snprintf(err_msg, sizeof(err_msg), 
+                          "Ошибка: Не удалось открыть файл '%s'\n", filename);
+        write(STDERR_FILENO, err_msg, len);
         
         shared_data->terminate = true;
         sem_post(sem_client);
         
-        cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
+        munmap(shared_data, sizeof(shared_data_t));
+        close(shm_fd);
+        sem_close(sem_client);
+        sem_close(sem_server);
         exit(EXIT_FAILURE);
     }
     
     char buffer[BUFFER_SIZE];
+    char processed_buffer[BUFFER_SIZE];
     ssize_t bytes_read;
-    int processed_any = 0;
+    int should_terminate = 0;
+    int found_composite_numbers = 0;
     
-    while ((bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0) {
-        size_t to_copy = bytes_read < BUFFER_SIZE ? bytes_read : BUFFER_SIZE - 1;
-        memcpy(shared_data->data, buffer, to_copy);
-        shared_data->data_size = to_copy;
-        shared_data->client_ready = true;
+    while (!should_terminate && (bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0) {
+        size_t output_size;
+        int found_invalid;
         
-        if (sem_post(sem_client) == -1) {
-            perror("sem_post failed");
+        int result = process_data(buffer, bytes_read, processed_buffer, &output_size, &found_invalid);
+        
+        if (found_invalid) {
+            should_terminate = 1;
+            shared_data->should_terminate_early = true;
+        }
+        
+        if (output_size > 0) {
+            memcpy(shared_data->data, processed_buffer, output_size);
+            shared_data->data_size = output_size;
+            shared_data->client_ready = true;
+            found_composite_numbers = 1;
+            
+            if (sem_post(sem_client) == -1) {
+                perror("sem_post failed");
+                break;
+            }
+            
+            if (sem_wait(sem_server) == -1) {
+                if (errno == EINTR) continue;
+                perror("sem_wait failed");
+                break;
+            }
+            
+            shared_data->client_ready = false;
+        }
+        
+        if (!result) {
             break;
         }
-        
-        if (sem_wait(sem_server) == -1) {
-            if (errno == EINTR) continue;
-            perror("sem_wait failed");
-            break;
-        }
-        
-        if (shared_data->data_size > 0) {
-            write(STDOUT_FILENO, shared_data->data, shared_data->data_size);
-            processed_any = 1;
-        }
-        
-        shared_data->client_ready = false;
     }
     
-    if (!processed_any && bytes_read == 0) {
-        const char msg[] = "Нет составных чисел либо файл содержит только завершающие числа.\n";
-        write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-    }
+    close(file_fd);
     
     shared_data->terminate = true;
     if (sem_post(sem_client) == -1) {
         perror("sem_post failed");
     }
     
-    close(file_fd);
-    
-    cleanup_resources(NULL, NULL, NULL, shared_data, shm_fd, sem_client, sem_server);
+    cleanup_resources(shm_name, sem_client_name, sem_server_name, shared_data, shm_fd, sem_client, sem_server);
+
     
     return EXIT_SUCCESS;
 }

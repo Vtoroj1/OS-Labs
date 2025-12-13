@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <semaphore.h>
 #include <errno.h>
 
@@ -23,6 +24,7 @@ typedef struct {
     bool client_ready;
     bool server_ready;
     bool terminate;
+    bool should_terminate_early;
 } shared_data_t;
 
 
